@@ -7,11 +7,19 @@ and never merged.
 
 [upstream]: https://opencores.org/projects/fpu100
 
+> ✅ **HW verified on 2026-04-22** — patched core synthesized for an Intel
+> Cyclone V FPGA (Altera 5CEFA2, 50 MHz clock), driven by an SH-2 CPU through
+> the included Wishbone wrapper.  All 8 regression vectors pass, including
+> the bugtracker #4/#5 reproducer.  See *HW verification* below.
+
 ## What this repo is
 
 - `core/` — the 16 VHDL source files of `fpu100` trunk rev 21 (the final
-  "New directory structure" snapshot before upstream went quiet), with the two
-  patches described below applied.
+  "New directory structure" snapshot before upstream went quiet), with the
+  two patches described below applied.
+- `rtl/` — `fpu_wb.v`, a small Wishbone-slave wrapper around the raw `fpu`
+  entity.  Exposes a 4-register memory-mapped interface (operands, control,
+  result) and takes care of handshaking.
 - `sim/` — a minimal GHDL testbench (`tb_bugtracker.vhd`) and a driver script
   (`run.sh`) that exercise the patched core against the public bug-report
   reproducer plus a handful of additional multiply cases.
@@ -62,7 +70,30 @@ with the first clock edge at which `output_o` is valid. `core/fpu.vhd:107`.
 
 [bug2]: https://opencores.org/projects/fpu100/issues/2
 
-## Running the regression
+### `rtl/fpu_wb.v` — Wishbone wrapper fixes
+
+Not an upstream bug, but included because the raw `fpu` entity really wants
+a wrapper around it.  Three issues that would otherwise bite anyone writing
+their own wrapper:
+
+1. **`req = sel & stb & cyc & ~ack;`** — back-to-back ACK leaking.  When an
+   OP write is immediately followed by a RESULT read inside the same 32-bit
+   fetch word, the ack raised for the write phase spills into the read
+   phase (both share the device-select line), and the master reads `0`
+   without stalling.
+2. **Result and flag latching on the `ready_o` pulse.**  `ready_o` is a
+   one-cycle pulse and `output_o` / status wires are combinational off
+   internal pipeline state.  Without a latch, a subsequent start (or enough
+   cycles) would drift the read-back under the bus.
+3. **32-bit status read-back layout.**  The original concatenation added up
+   to 27 bits; Verilog's implicit zero-extend moved `wb_ready` to bit 10
+   instead of the documented bit 8, so polling `FPU_OP & 0x100` never saw
+   the ready flag.  Fixed to the same layout as the companion drop-in
+   wrapper for [fpu-sp][fpu-sp] (ready at bit 8).
+
+[fpu-sp]: https://github.com/taneroksuz/fpu-sp
+
+## Running the simulation regression
 
 Requires [GHDL](https://ghdl.github.io/ghdl/) (tested with 4.1.0).
 
@@ -85,23 +116,52 @@ PASS 1e-20 * 1e-20    : 0x1e3ce508 * 0x1e3ce508 = 0x000116c2 (denormal)
 ALL PASS (0 failures)
 ```
 
-Only `fpu_op_i = "010"` (multiply) is exercised. Add/sub/div/sqrt paths are
-untouched by the patches, but are also not independently verified here.
+The testbench exercises only `fpu_op_i = "010"` (multiply).  Add/sub/div/sqrt
+paths are untouched by the fpu100 core patches, but are also independently
+verified by the on-hardware regression described next.
+
+## HW verification
+
+**Target**: Intel Cyclone V 5CEFA2F23 (Altera) on a custom board.  
+**CPU**: SH-2 (fvdhoef/aquarius-plus-style SoC) at 50 MHz.  
+**Driver**: An 8-case regression cart that drives the FPU through the
+Wishbone wrapper, writes each test's result to an on-screen text plane, and
+lights an LED on full pass.
+
+All 8 tests passed:
+
+| # | label                     | expected     | observed     | result |
+|---|---------------------------|--------------|--------------|--------|
+| 1 | bugtracker #4/#5 denormal | `0x80340138` | `0x80340138` | OK     |
+| 2 | `1.0 + 2.0 = 3.0`         | `0x40400000` | `0x40400000` | OK     |
+| 3 | `3.0 - 1.0 = 2.0`         | `0x40000000` | `0x40000000` | OK     |
+| 4 | `2.0 * 3.0 = 6.0`         | `0x40C00000` | `0x40C00000` | OK     |
+| 5 | `6.0 / 2.0 = 3.0`         | `0x40400000` | `0x40400000` | OK     |
+| 6 | `sqrt(4.0) = 2.0`         | `0x40000000` | `0x40000000` | OK     |
+| 7 | `0.1 + 0.2 = 0.3`         | `0x3E99999A` | `0x3E99999A` | OK     |
+| 8 | `0.0 * 0.0 = 0`           | `0x00000000` | `0x00000000` | OK     |
+
+The LED (GPIO[31]) came on, indicating every test passed.
+
+The driving cart source is not part of this repo (it's SoC-specific), but
+the regression pattern is straightforward: write OPA, OPB, CTL=MUL (or
+other op); read RESULT; compare to `expected`.  The wrapper will bus-stall
+the read until the FPU signals `ready_o`.
 
 ## Scope, caveats
 
-- **Simulation-verified only.** These patches have not been put through
-  a synthesized hardware run in this repo. They should be harmless on real
-  silicon — the math fix is a literal one-line expression swap, and the
-  timing fix only delays `ready_o` by two cycles (a master that was already
-  correctly waiting for `ready_o` will just see the same value two cycles
-  later). But you are responsible for verifying on your own target.
+- Only the parallel multiplier path (`MUL_SERIAL = 0`) is exercised.  If you
+  use the serial multiplier, `MUL_COUNT` for that path (upstream value: 34)
+  may also be off — re-check against your pipeline depth.
 - The upstream testbench (`test_bench/tb_fpu.vhd`) relies on an external
-  `testcases.txt` file that is not distributed with the opencores release.
-  Porting it to run here is future work.
-- Only the parallel multiplier path (`MUL_SERIAL = 0`) is tested. If you use
-  the serial multiplier, `MUL_COUNT` for that path (upstream value: 34) may
-  also be off — re-check against your pipeline depth.
+  `testcases.txt` file that is not distributed with the opencores release,
+  so it is not wired into the sim runner here.  Porting a broader test
+  vector set is future work.
+- Latency characteristics of fpu100 (13-cycle multiply after the timing fix,
+  no pipeline) may be limiting for heavy FP workloads; for production use
+  consider a pipelined FPU such as [fpu-sp][fpu-sp].  fpu100-bugfix is most
+  useful as a minimal, well-documented, LGPL-friendly drop-in when GPL
+  code-bases are a concern.
 
 ## Credit and license
 
@@ -114,6 +174,7 @@ published on opencores.org under:
 > disclaimer. (…) You can use this code academically, commercially, etc. for
 > free; just acknowledge the author.
 
-This fork preserves those notices in every source file. The patches in
-`core/post_norm_mul.vhd` and `core/fpu.vhd` are contributed under the same
-terms; please continue to credit the original author when reusing this code.
+This fork preserves those notices in every source file.  The patches in
+`core/post_norm_mul.vhd`, `core/fpu.vhd` and the wrapper fixes in
+`rtl/fpu_wb.v` are contributed under the same terms; please continue to
+credit the original author when reusing this code.
