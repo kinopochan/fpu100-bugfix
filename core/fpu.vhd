@@ -104,7 +104,7 @@ architecture rtl of fpu is
     
 
 	constant MUL_SERIAL: integer range 0 to 1 := 0; -- 0 for parallel multiplier, 1 for serial
-	constant MUL_COUNT: integer:= 11; --11 for parallel multiplier, 34 for serial
+	constant MUL_COUNT: integer:= 13; --13 for parallel multiplier (bugtracker #2 fix: was 11 in upstream, output_o not yet valid 2 cycles after ready_o)
 		
 	-- Input/output registers
 	signal s_opa_i, s_opb_i : std_logic_vector(FP_WIDTH-1 downto 0);

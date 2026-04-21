@@ -141,7 +141,7 @@ begin
 	s_exp_10b <= s_exp_10a - ("0000"&s_zeros);
 	
 	process(clk_i)
-		variable v_shr1, v_shl1 : std_logic_vector(9 downto 0); 
+		variable v_shr1, v_shl1 : std_logic_vector(9 downto 0);
 	begin
 	if rising_edge(clk_i) then
 		if s_exp_10a(9)='1' or s_exp_10a="0000000000" then
@@ -151,7 +151,9 @@ begin
 		else
 			if s_exp_10b(9)='1' or s_exp_10b="0000000000" then
 				v_shr1 := (others =>'0');
-				v_shl1 := ("0000"&s_zeros) - s_exp_10a;
+				-- Fix for opencores bugtracker #4/#5 (denormal multiply result shift amount).
+				-- Upstream:  v_shl1 := ("0000"&s_zeros) - s_exp_10a;
+				v_shl1 := s_exp_10a - "0000000001";
 				s_expo1 <= "000000001";
 			elsif s_exp_10b(8)='1' then
 				v_shr1 := (others =>'0');
@@ -183,8 +185,8 @@ begin
 		if rising_edge(clk_i) then
 			if s_shr2 /= "000000" then
 				s_frac2a <= shr(s_fract_48_i, s_shr2);
-			else 
-				s_frac2a <= shl(s_fract_48_i, s_shl2); 
+			else
+				s_frac2a <= shl(s_fract_48_i, s_shl2);
 			end if;
 		end if;
 	end process;
