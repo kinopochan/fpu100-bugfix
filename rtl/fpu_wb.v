@@ -78,18 +78,25 @@ module fpu_wb (
     );
 
     // ----------------------------------------
-    // Result-valid flag
+    // Result / flag latches
     // ----------------------------------------
-    // Cleared when OP is written (new computation started).
-    // Set when fpu_ready goes high (result available).
-    // Persists until next OP write, so RESULT can be read
-    // multiple times and the 1-cycle ready pulse is not missed.
-    reg wb_ready;
+    // fpu100's ready_o is a one-cycle pulse and the status wires are
+    // combinational off internal pipeline state, so the bus may read
+    // much later than the ready edge.  Latch on the pulse and hand
+    // out the latched copy (matches fpu_sp_wb).
+    reg         wb_ready;
+    reg [31:0]  result_latched;
+    reg [7:0]   flags_latched;  // {snan, qnan, zero, inf, div_zero, underflow, overflow, ine}
 
     // ----------------------------------------
     // Wishbone FSM
     // ----------------------------------------
-    wire req = sel & stb & cyc;
+    // Guard req with ~ack to prevent back-to-back ACK leaking.  Without
+    // this, when OP write is immediately followed by RESULT read
+    // (back-to-back memory access, same 32-bit fetch word), the ack
+    // raised for the write phase spills into the read phase (both
+    // share sel=1), and the CPU reads dat_o=0 without stalling.
+    wire req = sel & stb & cyc & ~ack;
 
     localparam S_IDLE     = 2'd0;
     localparam S_WAIT     = 2'd1;  // waiting for FPU ready
@@ -98,22 +105,30 @@ module fpu_wb (
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
-            opa_reg    <= 32'd0;
-            opb_reg    <= 32'd0;
-            fpu_op_reg <= 3'd0;
-            rmode_reg  <= 2'd0;
-            fpu_start  <= 1'b0;
-            ack        <= 1'b0;
-            dat_o      <= 32'd0;
-            state      <= S_IDLE;
-            wb_ready   <= 1'b0;
+            opa_reg        <= 32'd0;
+            opb_reg        <= 32'd0;
+            fpu_op_reg     <= 3'd0;
+            rmode_reg      <= 2'd0;
+            fpu_start      <= 1'b0;
+            ack            <= 1'b0;
+            dat_o          <= 32'd0;
+            state          <= S_IDLE;
+            wb_ready       <= 1'b0;
+            result_latched <= 32'd0;
+            flags_latched  <= 8'd0;
         end else begin
             fpu_start <= 1'b0;  // default: one-shot pulse
             ack       <= 1'b0;
 
-            // Latch fpu_ready → wb_ready (persists until next OP write)
-            if (fpu_ready)
-                wb_ready <= 1'b1;
+            // Latch result, status flags and ready on the 1-cycle pulse.
+            if (fpu_ready) begin
+                wb_ready       <= 1'b1;
+                result_latched <= fpu_output;
+                flags_latched  <= {fpu_snan, fpu_qnan,
+                                   fpu_zero, fpu_inf,
+                                   fpu_div_zero, fpu_underflow,
+                                   fpu_overflow, fpu_ine};
+            end
 
             case (state)
                 S_IDLE: begin
@@ -134,13 +149,10 @@ module fpu_wb (
                                     fpu_op_reg <= dat_i[2:0];
                                     rmode_reg  <= dat_i[5:4];
                                     fpu_start  <= 1'b1;
-                                    wb_ready   <= 1'b0;  // invalidate: overrides fpu_ready latch above
+                                    wb_ready   <= 1'b0;  // invalidate; overrides fpu_ready latch above
                                 end else begin
                                     dat_o <= {8'd0,
-                                              fpu_snan, fpu_qnan,
-                                              fpu_zero, fpu_inf,
-                                              fpu_div_zero, fpu_underflow,
-                                              fpu_overflow, fpu_ine,
+                                              flags_latched,
                                               wb_ready,
                                               5'd0, rmode_reg, fpu_op_reg};
                                 end
@@ -153,13 +165,10 @@ module fpu_wb (
                                     wb_ready  <= 1'b0;
                                     ack <= 1'b1;
                                 end else begin
-                                    // Read: stall until wb_ready
-                                    if (wb_ready) begin
-                                        dat_o <= fpu_output;
-                                        ack   <= 1'b1;
-                                    end else begin
-                                        state <= S_WAIT;
-                                    end
+                                    // Read: stall until wb_ready (always
+                                    // through S_WAIT, no shortcut — the
+                                    // latch might update this same cycle).
+                                    state <= S_WAIT;
                                 end
                             end
                         endcase
@@ -167,13 +176,14 @@ module fpu_wb (
                 end
 
                 S_WAIT: begin
-                    // Waiting for FPU to complete
+                    // Waiting for FPU to complete; return the latched
+                    // result (stable even if the FPU is re-started).
                     if (wb_ready) begin
-                        dat_o <= fpu_output;
+                        dat_o <= result_latched;
                         ack   <= 1'b1;
                         state <= S_IDLE;
                     end
-                    // If CPU drops request, return to idle
+                    // If the master drops the request, abandon the wait.
                     if (~req) begin
                         state <= S_IDLE;
                     end
