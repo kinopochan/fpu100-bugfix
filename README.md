@@ -105,8 +105,6 @@ to work through are probably worth being aware of:
    `FPU_OP & 0x100` hang forever — this is what our first HW-test actually
    caught, before we were exercising the fpu100 patches themselves).
 
-[fpu-sp]: https://github.com/taneroksuz/fpu-sp
-
 ## Running the simulation regression
 
 Requires [GHDL](https://ghdl.github.io/ghdl/) (tested with 4.1.0).
@@ -155,12 +153,14 @@ All 8 tests passed:
 | 7 | `0.1 + 0.2 = 0.3`         | `0x3E99999A` | `0x3E99999A` | OK     |
 | 8 | `0.0 * 0.0 = 0`           | `0x00000000` | `0x00000000` | OK     |
 
-The LED (GPIO[31]) came on, indicating every test passed.
+The LED (GPIO[31]) came on, indicating every test passed.  The regression
+was run twice: once reading `RESULT` with bus-stall (exercises the patched
+`MUL_COUNT` and the denormal mul fix), and once using the `FPU_OP & 0x100`
+polling path (exercises the wrapper status read-back layout).  Both pass.
 
 The driving cart source is not part of this repo (it's SoC-specific), but
 the regression pattern is straightforward: write OPA, OPB, CTL=MUL (or
-other op); read RESULT; compare to `expected`.  The wrapper will bus-stall
-the read until the FPU signals `ready_o`.
+other op); read RESULT; compare to `expected`.
 
 ## Scope, caveats
 
@@ -171,11 +171,11 @@ the read until the FPU signals `ready_o`.
   `testcases.txt` file that is not distributed with the opencores release,
   so it is not wired into the sim runner here.  Porting a broader test
   vector set is future work.
-- Latency characteristics of fpu100 (13-cycle multiply after the timing fix,
-  no pipeline) may be limiting for heavy FP workloads; for production use
-  consider a pipelined FPU such as [fpu-sp][fpu-sp].  fpu100-bugfix is most
-  useful as a minimal, well-documented, LGPL-friendly drop-in when GPL
-  code-bases are a concern.
+- fpu100 is an FSM-style sequential FPU with no pipelining, so its multiply
+  latency is 13 cycles (after the timing fix) and the design's critical path
+  is short enough that timing closure is easy — in the verification target
+  above, Fmax sits comfortably above 46 MHz with plenty of slack at 50 MHz.
+  If your workload can tolerate the latency, that slack is a real benefit.
 
 ## Credit and license
 
