@@ -151,10 +151,23 @@ module fpu_wb (
                                     fpu_start  <= 1'b1;
                                     wb_ready   <= 1'b0;  // invalidate; overrides fpu_ready latch above
                                 end else begin
+                                    // 32-bit layout (matches fpu_sp_wb exactly):
+                                    //   [2:0]   fpu_op
+                                    //   [3]     0
+                                    //   [6:4]   rmode (2-bit rmode zero-extended)
+                                    //   [7]     0
+                                    //   [8]     ready
+                                    //   [15:9]  0
+                                    //   [23:16] flags {snan,qnan,zero,inf,dz,uf,of,ine}
+                                    //   [31:24] 0
                                     dat_o <= {8'd0,
-                                              flags_latched,
-                                              wb_ready,
-                                              5'd0, rmode_reg, fpu_op_reg};
+                                              flags_latched,      // [23:16]
+                                              7'd0,               // [15:9]
+                                              wb_ready,           // [8]
+                                              1'b0,               // [7]
+                                              1'b0, rmode_reg,    // [6:4] 3-bit (msb zero)
+                                              1'b0,               // [3]
+                                              fpu_op_reg};        // [2:0]
                                 end
                                 ack <= 1'b1;
                             end
