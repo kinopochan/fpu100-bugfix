@@ -70,26 +70,40 @@ with the first clock edge at which `output_o` is valid. `core/fpu.vhd:107`.
 
 [bug2]: https://opencores.org/projects/fpu100/issues/2
 
-### `rtl/fpu_wb.v` — Wishbone wrapper fixes
+## Bonus: `rtl/fpu_wb.v` — Wishbone wrapper
 
-Not an upstream bug, but included because the raw `fpu` entity really wants
-a wrapper around it.  Three issues that would otherwise bite anyone writing
-their own wrapper:
+Not part of upstream fpu100.  This is a small Wishbone-slave wrapper we
+wrote for our own SoC that bus-connects the raw `fpu` entity to an SH-2
+(or any other wishbone master).  It's included here purely as a
+convenience — you can drop it next to the core and get a 4-register
+MMIO interface (OPA / OPB / CTL / RESULT) without writing your own bus
+glue.
 
-1. **`req = sel & stb & cyc & ~ack;`** — back-to-back ACK leaking.  When an
-   OP write is immediately followed by a RESULT read inside the same 32-bit
-   fetch word, the ack raised for the write phase spills into the read
-   phase (both share the device-select line), and the master reads `0`
-   without stalling.
-2. **Result and flag latching on the `ready_o` pulse.**  `ready_o` is a
-   one-cycle pulse and `output_o` / status wires are combinational off
-   internal pipeline state.  Without a latch, a subsequent start (or enough
-   cycles) would drift the read-back under the bus.
-3. **32-bit status read-back layout.**  The original concatenation added up
-   to 27 bits; Verilog's implicit zero-extend moved `wb_ready` to bit 10
-   instead of the documented bit 8, so polling `FPU_OP & 0x100` never saw
-   the ready flag.  Fixed to the same layout as the companion drop-in
-   wrapper for [fpu-sp][fpu-sp] (ready at bit 8).
+Register map:
+
+```
++0x00  OPA     (R/W)  Operand A  (IEEE 754 single)
++0x04  OPB     (R/W)  Operand B  (IEEE 754 single)
++0x08  FPU_OP  (R/W)  Write = op + rmode, triggers start
+                      Read  = op, rmode, ready, IEEE flags
++0x0C  RESULT  (R stalls until ready, W = re-start)
+```
+
+If you're writing your own wrapper instead, three subtleties that we had
+to work through are probably worth being aware of:
+
+1. `req = sel & stb & cyc & ~ack;` — without the `~ack` guard, an OP write
+   that's immediately followed by a RESULT read (back-to-back MA inside
+   one 32-bit fetch word) spills the write's ack into the read phase and
+   the master reads `0` without stalling.
+2. `ready_o` is a one-cycle pulse and `output_o` / status are
+   combinational off pipeline state, so the wrapper latches result + flags
+   on the pulse and hands out the latch (not the live wire) on bus reads.
+3. The status read-back concatenation has to add up to 32 bits exactly, or
+   Verilog's implicit zero-extend silently shifts the fields (we had
+   `wb_ready` end up at bit 10 instead of bit 8, which made polling
+   `FPU_OP & 0x100` hang forever — this is what our first HW-test actually
+   caught, before we were exercising the fpu100 patches themselves).
 
 [fpu-sp]: https://github.com/taneroksuz/fpu-sp
 
