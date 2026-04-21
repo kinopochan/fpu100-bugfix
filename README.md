@@ -1,8 +1,7 @@
 # fpu100-bugfix
 
-Unmerged patches for [opencores.org/projects/fpu100][upstream] — two
-long-standing bugs that have been open on the upstream tracker for more
-than a decade.
+Unmerged patches for [opencores.org/projects/fpu100][upstream] — two bugs
+from the upstream tracker that had never been addressed.
 
 [upstream]: https://opencores.org/projects/fpu100
 
@@ -11,7 +10,7 @@ is an auditable diff between upstream and this fork.
 
 ## Fixed bugs
 
-### Bugtracker [#4][bug4] / [#5][bug5] — denormal multiply (11+ years open)
+### Bugtracker [#4][bug4] / [#5][bug5] — denormal multiply
 
 A multiplication whose result lands in the binary32 subnormal range comes
 back with the wrong mantissa.  Reproducer from the report:
@@ -26,7 +25,7 @@ Fix: one-line shift-amount correction at `core/post_norm_mul.vhd:154`.
 [bug4]: https://opencores.org/projects/fpu100/issues/4
 [bug5]: https://opencores.org/projects/fpu100/issues/5
 
-### Bugtracker [#2][bug2] — `ready_o` premature (14+ years open)
+### Bugtracker [#2][bug2] — `ready_o` premature
 
 `ready_o` rises two clocks before `output_o` is actually valid, so any
 master sampling on the rising edge reads stale data.
