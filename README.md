@@ -71,3 +71,14 @@ fpu100 is © 2006 Jidan Al-eryani `<jidan@gmx.net>`, distributed under:
 
 Source-file copyright notices are preserved.  Patches and wrapper are
 contributed under the same terms.
+
+### About the modifications in this fork
+
+kinopochan makes no claim of rights over the bug-fix diffs or the
+wrapper in this fork.  When using this code, please follow the
+original upstream license (above) and retain the original author
+attribution (Jidan Al-eryani).
+
+このフォークの修正差分・wrapper について、きのぽは特に権利主張を
+しません。利用時はオリジナル (上記) のライセンスに従い、オリジナル
+作者 (Jidan Al-eryani) のクレジットを忘れずに記載してください。
